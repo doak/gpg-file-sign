@@ -7,12 +7,21 @@ FILTER='cat'
 DEF_FILTER='sed "/^#/d"'
 
 
-syntax() {
+usage() {
+    local scriptname="`basename "$0"`"
+
     cat <<EOF
-SYNTAX: $0 [--help] [--filter [<cmd>]] [--force] [--] <file>...
+Usage: 1) $scriptname [--help] [--filter [<cmd>]] [--force] [--] <file>...
+       2) $scriptname --update-script <file>...
     <cmd>:  Commands to filter to-be-verified/signed data.
             (String, defaults to '${DEF_FILTER[@]}'.)
-    <file>: File to verify/sign.
+    <file>: 1) File to verify/sign.
+            2) Signature file to update.
+
+    1) Create script which is able to verify <file>. The script includes
+       signature(s) and <filter> configuration. <file> will be preprocessed
+       by <filter> before signing/veryifing.
+    2) Update script part, but do not touch <filter> and signature(s).
 EOF
 }
 
@@ -115,12 +124,29 @@ exit \$?
 END_OF_FILE
 }
 
+update_script() {
+    local file="$1"
+    local extension="$2"
+    local tmp="`mktemp`"
+
+    local filter="`grep -oP "^FILTER='\\K[^']+" -- "$file"`" ||
+    error "Failed to get previous filter from '$file'."
+    (
+        gen_verify_script "$filter" "$extension"
+        sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' -- "$file"
+    ) >"$tmp" &&
+    mv -- "$tmp" "$file" &&
+    chmod +x -- "$file" &&
+    true
+}
+
 
 FORCE=false
+UPDATE=false
 while test -n "$1"; do
     case "$1" in
         "--help")
-            syntax
+            usage
             exit 0
             ;;
         "--filter")
@@ -133,6 +159,9 @@ while test -n "$1"; do
             ;;
         "--force")
             FORCE=true
+            ;;
+        "--update-script")
+            UPDATE=true
             ;;
         "--")
             shift
@@ -152,8 +181,13 @@ error "Missing files."
 
 for file in "$@"; do
     SIGNATURE_FILE="$file$EXTENSION"
+
     if ! test -r "$file"; then
-        error "Failed to read data file '$file'."
+        error "Failed to read file '$file'."
+    elif $UPDATE; then
+        update_script "$file" "$EXTENSION" ||
+        error "Failed to update script of signature file '$file'."
+        continue
     elif ! $FORCE && [[ $file =~ $EXTENSION$ ]]; then
         warn "Refuse to create signature for file '$file'."
         continue
