@@ -68,7 +68,7 @@ while test -n "$1"; do
             error "Invalid option '$1'."
             ;;
         *)
-            break;
+            break
             ;;
     esac
 done
