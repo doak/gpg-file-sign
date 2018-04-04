@@ -17,8 +17,9 @@ EOF
 }
 
 error() {
+    local errcode=$?
     echo "ERR: $*" >&2
-    exit 1
+    exit $errcode
 }
 
 warn() {
