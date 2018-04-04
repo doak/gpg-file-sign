@@ -2,14 +2,15 @@
 
 
 EXTENSION=".asc"
-FILTER='sed "/^#/d"'
+FILTER='cat'
+DEF_FILTER='sed "/^#/d"'
 
 
 syntax() {
     cat <<EOF
-SYNTAX: $0 [--help|--filter <cmd>] [--force]... <file>...
+SYNTAX: $0 [--help] [--filter [<cmd>]] [--force]* [--] <file>...
     <cmd>:  Commands to filter to-be-verified/signed data.
-            (String, defaults to '${FILTER[@]}'.)
+            (String, defaults to '${DEF_FILTER[@]}'.)
     <file>: File to verify/sign.
 EOF
 }
@@ -48,17 +49,15 @@ while test -n "$1"; do
             exit 0
             ;;
         "--filter")
-            if test $# -lt 2 || [[ $2 =~ ^-- ]]; then
-                error "Missig argument for '$1'."
+            if [[ $2 =~ ^-- ]]; then
+                FILTER="$DEF_FILTER"
+            else
+                FILTER="$2"
+                shift
             fi
-            FILTER="$2" &&
-            shift 2
-            test -n "$FILTER" ||
-            FILTER="cat"
             ;;
         "--force")
             let FORCE++
-            shift
             ;;
         "--")
             shift
@@ -71,7 +70,10 @@ while test -n "$1"; do
             break
             ;;
     esac
+    shift
 done
+test $# -ne 0 ||
+error "Missing files."
 
 for file in "$@"; do
     SIGNATURE_FILE="$file$EXTENSION"
