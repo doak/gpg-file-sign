@@ -9,7 +9,7 @@ DEF_FILTER='sed "/^#/d"'
 
 syntax() {
     cat <<EOF
-SYNTAX: $0 [--help] [--filter [<cmd>]] [--force]* [--] <file>...
+SYNTAX: $0 [--help] [--filter [<cmd>]] [--force] [--] <file>...
     <cmd>:  Commands to filter to-be-verified/signed data.
             (String, defaults to '${DEF_FILTER[@]}'.)
     <file>: File to verify/sign.
@@ -32,6 +32,7 @@ sign_file() {
     local file="$1"
     local filter="$2"
     local signature_file="$3"
+    local prefix_content="${4:-false}"
     local signature
 
     test -r "$file" ||
@@ -42,6 +43,7 @@ sign_file() {
         gpg --detach --armor --sign -
     )" &&
     (
+        $prefix_content &&
         cat
         echo "$signature"
     ) >>"$signature_file" &&
@@ -114,7 +116,7 @@ END_OF_FILE
 }
 
 
-FORCE=0
+FORCE=false
 while test -n "$1"; do
     case "$1" in
         "--help")
@@ -130,7 +132,7 @@ while test -n "$1"; do
             fi
             ;;
         "--force")
-            let FORCE++
+            FORCE=true
             ;;
         "--")
             shift
@@ -150,33 +152,19 @@ error "Missing files."
 
 for file in "$@"; do
     SIGNATURE_FILE="$file$EXTENSION"
-    SKIP_VERIFY_SCRIPT=false
     if ! test -r "$file"; then
-        error "Failed to read file '$file'."
-    elif test $FORCE -lt 2 && [[ $file =~ $EXTENSION$ ]]; then
+        error "Failed to read data file '$file'."
+    elif ! $FORCE && [[ $file =~ $EXTENSION$ ]]; then
         warn "Refuse to create signature for file '$file'."
         continue
-    elif test -r "$SIGNATURE_FILE"; then
-        if test $FORCE -lt 1; then
-            warn "Refuse to append to existing signature file '$SIGNATURE_FILE'."
-            continue
-        elif test $FORCE -ge 2; then
-            rm -- "$SIGNATURE_FILE"
-        else
-            SKIP_VERIFY_SCRIPT=true
-            PREVIOUS_FILTER="`grep -oP "^eval '\\K[^']+" -- "$SIGNATURE_FILE"`"
-            if test -n "$PREVIOUS_FILTER" -a "$PREVIOUS_FILTER" != "$FILTER"; then
-                warn "Refuse to append to existing signature file '$SIGNATURE_FILE' using a different filter: '$PREVIOUS_FILTER' != '$FILTER'."
-                continue
-            fi
-        fi
+    elif ! $FORCE && test -r "$SIGNATURE_FILE"; then
+        warn "Refuse to overwrite existing signature file '$SIGNATURE_FILE'."
+        continue
     fi
 
-    (
-        $SKIP_VERIFY_SCRIPT ||
-        gen_verify_script "$FILTER" "$EXTENSION"
-    ) |
-    sign_file "$file" "$FILTER" "$SIGNATURE_FILE" &&
+    rm -f -- "$SIGNATURE_FILE" &&
+    gen_verify_script "$FILTER" "$EXTENSION" |
+    sign_file "$file" "$FILTER" "$SIGNATURE_FILE" true &&
     chmod +x -- "$SIGNATURE_FILE" &&
     true ||
     error "Failed to create signature for '$file'."
