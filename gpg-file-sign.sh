@@ -74,19 +74,36 @@ while test -n "$1"; do
 done
 
 for file in "$@"; do
-    if test $FORCE -lt 1 -a -r "$file$EXTENSION"; then
-        warn "Refuse to overwrite existing signature file '$file$EXTENSION'."
-        continue
+    SIGNATURE_FILE="$file$EXTENSION"
+    SKIP_VERIFY_SCRIPT=false
+    if ! test -r "$file"; then
+        error "Failed to read file '$file'."
     elif test $FORCE -lt 2 && [[ $file =~ $EXTENSION$ ]]; then
-        warn "Refuse to create signature for signaure file '$file'."
+        warn "Refuse to create signature for file '$file'."
         continue
+    elif test -r "$SIGNATURE_FILE"; then
+        if test $FORCE -lt 1; then
+            warn "Refuse to append to existing signature file '$SIGNATURE_FILE'."
+            continue
+        elif test $FORCE -ge 2; then
+            rm -- "$SIGNATURE_FILE"
+        else
+            SKIP_VERIFY_SCRIPT=true
+            PREVIOUS_FILTER="`grep -oP "^eval '\\K[^']+" -- "$SIGNATURE_FILE"`"
+            if test -n "$PREVIOUS_FILTER" -a "$PREVIOUS_FILTER" != "$FILTER"; then
+                warn "Refuse to append to existing signature file '$SIGNATURE_FILE' using a different filter: '$PREVIOUS_FILTER' != '$FILTER'."
+                continue
+            fi
+        fi
     fi
+
     (
+        $SKIP_VERIFY_SCRIPT ||
         gen_verify_script "$FILTER"
         cat -- "$file" |
         eval "$FILTER" |
         gpg --detach --armor --sign -
-    ) >"$file$EXTENSION" &&
-    chmod +x "$file$EXTENSION" &&
+    ) >>"$SIGNATURE_FILE" &&
+    chmod +x -- "$SIGNATURE_FILE" &&
     true
 done
