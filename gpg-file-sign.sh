@@ -28,20 +28,89 @@ warn() {
     return $errcode
 }
 
+sign_file() {
+    local file="$1"
+    local filter="$2"
+    local signature_file="$3"
+    local signature
+
+    test -r "$file" ||
+    error "Failed to read data file '$file'."
+    signature="$(
+        cat -- "$file" |
+        eval "$filter" |
+        gpg --detach --armor --sign -
+    )" &&
+    (
+        cat
+        echo "$signature"
+    ) >>"$signature_file" &&
+    true
+}
+
+verify_file() {
+    local file="$1"
+    local filter="$2"
+    local signature_file="$3"
+    local signature
+
+    test -r "$file" ||
+    error "Failed to read data file '$file'."
+    signature="$(
+        cat -- "$file" |
+        eval "$filter"
+    )" ||
+    error "Failed to preprocess with '$filter'."
+    echo "$signature" | gpg --verify "$signature_file" -
+}
+
 gen_verify_script() {
     local filter="$1"
+    local extension="$2"
 
-    cat <<EOF
+    cat <<END_OF_FILE
 #!/usr/bin/env bash
 
+FILTER='$filter'
 set -o pipefail
 
-cat -- "\${0%$EXTENSION}" |
-eval '$filter' |
-gpg --verify "\$0" -
+usage() {
+    cat <<EOF
+Usage: \`basename "\$0"\` [--help|-h] [--append|-a]
+Preprocesses corresponding file and verifies signature. Use '--append' to append
+your own signature using the same preprocessing.
+    Data file:    '\$DATA_FILE'
+    Preprocessor: '\$FILTER'
+EOF
+}
+
+`declare -pf error`
+
+`declare -pf sign_file`
+
+`declare -pf verify_file`
+
+SIGNATURE_FILE="\$0"
+DATA_FILE="\${SIGNATURE_FILE%$extension}"
+
+case "\$1" in
+    "--help"|"-h")
+        usage
+        exit 0
+        ;;
+    "--append"|"-a")
+        sign_file "\$DATA_FILE" "\$FILTER" "\$SIGNATURE_FILE"
+        ;;
+    "")
+        verify_file "\$DATA_FILE" "\$FILTER" "\$SIGNATURE_FILE"
+        ;;
+    *)
+        error "Invalid argument '\$1'."
+        ;;
+esac
 exit \$?
 
-EOF
+END_OF_FILE
 }
 
 
@@ -105,14 +174,10 @@ for file in "$@"; do
 
     (
         $SKIP_VERIFY_SCRIPT ||
-        gen_verify_script "$FILTER"
-        cat -- "$file" |
-        eval "$FILTER" |
-        gpg --detach --armor --sign -
-    ) >>"$SIGNATURE_FILE" &&
+        gen_verify_script "$FILTER" "$EXTENSION"
+    ) |
+    sign_file "$file" "$FILTER" "$SIGNATURE_FILE" &&
     chmod +x -- "$SIGNATURE_FILE" &&
-    true || {
-        rm -f "$SIGNATURE_FILE"
-        error "Failed to create signature for '$file'."
-    }
+    true ||
+    error "Failed to create signature for '$file'."
 done
