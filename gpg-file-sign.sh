@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+set -o pipefail
 
 EXTENSION=".asc"
 FILTER='cat'
@@ -31,6 +32,8 @@ gen_verify_script() {
 
     cat <<EOF
 #!/usr/bin/env bash
+
+set -o pipefail
 
 cat -- "\${0%$EXTENSION}" |
 eval '$filter' |
@@ -107,5 +110,8 @@ for file in "$@"; do
         gpg --detach --armor --sign -
     ) >>"$SIGNATURE_FILE" &&
     chmod +x -- "$SIGNATURE_FILE" &&
-    true
+    true || {
+        rm -f "$SIGNATURE_FILE"
+        error "Failed to create signature for '$file'."
+    }
 done
