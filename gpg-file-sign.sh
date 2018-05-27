@@ -128,6 +128,7 @@ update_script() {
     local tmp="`mktemp`"
     local filter
 
+    trap "rm -f '$tmp'" EXIT
     filter="`head -n 5 -- "$script" | grep -oP "^FILTER='\\K[^']+"`" ||
     error "Failed to get previous filter from '$script'. Is it a signature script?"
     (
@@ -135,6 +136,7 @@ update_script() {
         sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' -- "$script"
     ) >"$tmp" &&
     mv -- "$tmp" "$script" &&
+    trap - EXIT &&
     chmod +x -- "$script" &&
     true
 }
