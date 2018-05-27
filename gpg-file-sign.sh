@@ -11,12 +11,12 @@ usage() {
     local scriptname="`basename "$0"`"
 
     cat <<EOF
-Usage: 1) $scriptname [--help] [--filter [<cmd>]] [--force] [--] <file>...
+Usage: 1) $scriptname [--help|-h] [--filter [<cmd>]] [--force] [--] <file>...
        2) $scriptname --update-script <file>...
     <cmd>:  Commands to filter to-be-verified/signed data.
             (String, defaults to '${DEF_FILTER[@]}'.)
     <file>: 1) File to verify/sign.
-            2) Signature file to update.
+            2) Signature script to update.
 
     1) Create script which is able to verify <file>. The script includes
        signature(s) and <filter> configuration. <file> will be preprocessed
@@ -25,54 +25,31 @@ Usage: 1) $scriptname [--help] [--filter [<cmd>]] [--force] [--] <file>...
 EOF
 }
 
-error() {
+echox() {
     local errcode=$?
-    echo "ERR: $*" >&2
+    echo "$*" >&2
     exit $errcode
 }
 
+error() {
+    echox "ERR: $*"
+}
+
 warn() {
-    local errcode=$?
-    echo "WRN: $*" >&2
-    return $errcode
+    echox "WRN: $*"
 }
 
 sign_file() {
     local file="$1"
     local filter="$2"
-    local signature_file="$3"
-    local prefix_content="${4:-false}"
-    local signature
 
     test -r "$file" ||
-    error "Failed to read data file '$file'."
-    signature="$(
-        cat -- "$file" |
-        eval "$filter" |
-        gpg --detach --armor --sign -
-    )" &&
-    (
-        $prefix_content &&
-        cat
-        echo "$signature"
-    ) >>"$signature_file" &&
-    true
-}
-
-verify_file() {
-    local file="$1"
-    local filter="$2"
-    local signature_file="$3"
-    local signature
-
-    test -r "$file" ||
-    error "Failed to read data file '$file'."
-    signature="$(
-        cat -- "$file" |
-        eval "$filter"
-    )" ||
-    error "Failed to preprocess with '$filter'."
-    echo "$signature" | gpg --verify "$signature_file" -
+    error "Failed to access data file '$file'."
+    cat -- "$file" |
+    eval "$filter" |
+    gpg --detach --armor --sign - &&
+    true ||
+    error "Failed to create signature."
 }
 
 gen_verify_script() {
@@ -83,7 +60,11 @@ gen_verify_script() {
 #!/usr/bin/env bash
 
 FILTER='$filter'
+
 set -o pipefail
+SIGNATURE_SCRIPT="\$0"
+DATA_FILE="\${SIGNATURE_SCRIPT%$extension}"
+
 
 usage() {
     cat <<EOF
@@ -95,14 +76,12 @@ your own signature using the same preprocessing.
 EOF
 }
 
-`declare -pf error`
+error() {
+    local errcode=\$?
+    echo "ERR: \$*" 1>&2
+    exit \$errcode
+}
 
-`declare -pf sign_file`
-
-`declare -pf verify_file`
-
-SIGNATURE_FILE="\$0"
-DATA_FILE="\${SIGNATURE_FILE%$extension}"
 
 case "\$1" in
     "--help"|"-h")
@@ -110,10 +89,20 @@ case "\$1" in
         exit 0
         ;;
     "--append"|"-a")
-        sign_file "\$DATA_FILE" "\$FILTER" "\$SIGNATURE_FILE"
+        test -r "\$DATA_FILE" ||
+        error "Failed to access data file '\$DATA_FILE'."
+        cat -- "\$DATA_FILE" |
+        eval "\$FILTER" |
+        gpg --detach --armor --sign - >>"\$SIGNATURE_SCRIPT" ||
+        error "Failed to append signature."
         ;;
     "")
-        verify_file "\$DATA_FILE" "\$FILTER" "\$SIGNATURE_FILE"
+        test -r "\$DATA_FILE" ||
+        error "Failed to read data file '\$DATA_FILE'."
+        cat -- "\$DATA_FILE" |
+        eval "\$FILTER" |
+        gpg --verify "\$SIGNATURE_SCRIPT" - ||
+        error "There are INVALID signatures."
         ;;
     *)
         error "Invalid argument '\$1'."
@@ -125,18 +114,18 @@ END_OF_FILE
 }
 
 update_script() {
-    local file="$1"
+    local script="$1"
     local extension="$2"
     local tmp="`mktemp`"
 
-    local filter="`grep -oP "^FILTER='\\K[^']+" -- "$file"`" ||
-    error "Failed to get previous filter from '$file'."
+    local filter="`grep -oP "^FILTER='\\K[^']+" -- "$script"`" ||
+    error "Failed to get previous filter from '$script'."
     (
         gen_verify_script "$filter" "$extension"
-        sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' -- "$file"
+        sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' -- "$script"
     ) >"$tmp" &&
-    mv -- "$tmp" "$file" &&
-    chmod +x -- "$file" &&
+    mv -- "$tmp" "$script" &&
+    chmod +x -- "$script" &&
     true
 }
 
@@ -145,7 +134,7 @@ FORCE=false
 UPDATE=false
 while test -n "$1"; do
     case "$1" in
-        "--help")
+        "--help"|"-h")
             usage
             exit 0
             ;;
@@ -180,26 +169,28 @@ test $# -ne 0 ||
 error "Missing files."
 
 for file in "$@"; do
-    SIGNATURE_FILE="$file$EXTENSION"
+    SIGNATURE_SCRIPT="$file$EXTENSION"
 
     if ! test -r "$file"; then
         error "Failed to read file '$file'."
     elif $UPDATE; then
         update_script "$file" "$EXTENSION" ||
-        error "Failed to update script of signature file '$file'."
+        error "Failed to update script of signature script '$file'."
         continue
     elif ! $FORCE && [[ $file =~ $EXTENSION$ ]]; then
-        warn "Refuse to create signature for file '$file'."
+        warn "Refuse to create signature script for file '$file'."
         continue
-    elif ! $FORCE && test -r "$SIGNATURE_FILE"; then
-        warn "Refuse to overwrite existing signature file '$SIGNATURE_FILE'."
+    elif ! $FORCE && test -r "$SIGNATURE_SCRIPT"; then
+        warn "Refuse to overwrite existing signature script '$SIGNATURE_SCRIPT'."
         continue
     fi
 
-    rm -f -- "$SIGNATURE_FILE" &&
-    gen_verify_script "$FILTER" "$EXTENSION" |
-    sign_file "$file" "$FILTER" "$SIGNATURE_FILE" true &&
-    chmod +x -- "$SIGNATURE_FILE" &&
+    rm -f -- "$SIGNATURE_SCRIPT" && {
+        gen_verify_script "$FILTER" "$EXTENSION" &&
+        sign_file "$file" "$FILTER" &&
+        true
+    } >"$SIGNATURE_SCRIPT" &&
+    chmod +x -- "$SIGNATURE_SCRIPT" &&
     true ||
-    error "Failed to create signature for '$file'."
+    error "Failed to create signature script for '$file'."
 done
