@@ -126,9 +126,10 @@ update_script() {
     local script="$1"
     local extension="$2"
     local tmp="`mktemp`"
+    local filter
 
-    local filter="`grep -oP "^FILTER='\\K[^']+" -- "$script"`" ||
-    error "Failed to get previous filter from '$script'."
+    filter="`head -n 5 -- "$script" | grep -oP "^FILTER='\\K[^']+"`" ||
+    error "Failed to get previous filter from '$script'. Is it a signature script?"
     (
         gen_verify_script "$filter" "$extension"
         sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' -- "$script"
